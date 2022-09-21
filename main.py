@@ -124,8 +124,9 @@ def cls_align(train_loader, wrapped_model, args):
                 
                 # get new activation
                 text_feat = model.tokenize(text)
-                outputs = model.bert(**text_feat)
-                pooled_output = outputs[1]
+                # outputs = model.bert(**text_feat)
+                # pooled_output = outputs[1]
+                pooled_output = model.get_embedding_PURE(text_feat) if args.dataset=="Wiki80" else model.get_embedding(text_feat)
                 pooled_output = model.dropout(pooled_output)
                 new_activation = new_model_fc(pooled_output)
                 #
@@ -156,8 +157,9 @@ def IL_align(train_loader, model, args, R, repeat = 1):
                 
                 # get new activation
                 text_feat = model.tokenize(text)
-                outputs = model.bert(**text_feat)
-                pooled_output = outputs[1]
+                # outputs = model.bert(**text_feat)
+                # pooled_output = outputs[1]
+                pooled_output = model.get_embedding_PURE(text_feat) if args.dataset=="Wiki80" else model.get_embedding(text_feat)
                 pooled_output = model.dropout(pooled_output)
                 new_activation = new_model_fc(pooled_output)
                 new_activation = new_activation.double()
@@ -180,9 +182,10 @@ def main():
     model = BertClassifier(args.model,args.base_class,args).to(args.device)
     print(model)
     criterion = nn.CrossEntropyLoss().to(args.device)
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    # optimizer = torch.optim.SGD(model.parameters(), args.lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), args.lr)
     # base training 
     best_f1 = -1
     for epoch in range(args.start_epoch, args.epochs):
@@ -198,12 +201,12 @@ def main():
                 'best_f1': best_f1,
                 'optimizer': optimizer.state_dict(),
                 }
-                , os.path.join(args.model_save_path, "checkpoint_{}.pth".format(args.dataset)))
+                , os.path.join(args.model_save_path, "checkpoint_{}_{}_{}_{}.pth".format(args.dataset,TIME,args.phase,args.base_class)))
 
     # load model for debug
-    # model.load_state_dict(torch.load(os.path.join(args.model_save_path, "checkpoint_{}.pth".format(args.dataset)))['state_dict'])
-    # acc,f1 = validate(val_loader, model, criterion, args)
-    # print("acc and f1 after loading trained model, acc:{:.4f}, f1:{:.4f}".format(acc,f1))
+    model.load_state_dict(torch.load(os.path.join(args.model_save_path, "checkpoint_{}_{}_{}_{}.pth".format(args.dataset,TIME,args.phase,args.base_class)))['state_dict'])
+    acc,f1 = validate(val_loader, model, criterion, args)
+    print("acc and f1 after loading trained model, acc:{:.4f}, f1:{:.4f}".format(acc,f1))
     #
     # increment learning 
     bias_fe = False
@@ -240,7 +243,8 @@ def main():
         f1_cil.append(f1)
         print('Phase {}/{}: acc:{:.4f}%, f1:{:.4f}'.format(phase+1,args.phase,acc,f1))
     avg = sum(f1_cil)/len(f1_cil)
-    print('The average accuracy: {}'.format(avg))
+    print("avgs:",f1_cil)
+    print('The average f1: {}'.format(avg))
 
 
 if __name__ == '__main__':

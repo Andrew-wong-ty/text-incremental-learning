@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 from transformers import BertTokenizer, BertModel, AutoConfig, BertForSequenceClassification,BertPreTrainedModel\
     ,AutoModel,AutoTokenizer 
-
+from utils import get_subj_obj_start
 
 class BertClassifier(BertPreTrainedModel):
     def __init__(self, model, num_labels:int, args):
@@ -29,6 +29,13 @@ class BertClassifier(BertPreTrainedModel):
 
         self.bert = AutoModel.from_config(config)
         self.tokenizer = AutoTokenizer.from_pretrained(model) 
+        if args.dataset=="Wiki80":
+            self.additional_index = len(self.tokenizer) 
+            if len(args.tags)!=0:
+                print("Add {num} special tokens".format(num=len(args.tags)))
+                special_tokens_dict = {'additional_special_tokens': args.tags}
+                self.tokenizer.add_special_tokens(special_tokens_dict)
+                self.bert.resize_token_embeddings(len(self.tokenizer))  
         try:
             classifier_dropout = (
                 config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
@@ -36,7 +43,10 @@ class BertClassifier(BertPreTrainedModel):
         except:
             classifier_dropout = 0.1
         self.dropout = nn.Dropout(classifier_dropout)
-        self.fc = nn.Linear(config.hidden_size, self.num_labels, bias = False)
+        if args.dataset=="Wiki80":
+            self.fc = nn.Linear(config.hidden_size*2, self.num_labels, bias = False)
+        else:
+            self.fc = nn.Linear(config.hidden_size, self.num_labels, bias = False)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -53,21 +63,30 @@ class BertClassifier(BertPreTrainedModel):
             text_feat[k] = text_feat[k].to(self.args.device)
         return text_feat
 
+    def get_embedding_PURE(self, text_feat):
+        ent1_spos,ent2_spos = get_subj_obj_start(text_feat['input_ids'],self.tokenizer,self.additional_index)
+        outputs = self.bert(**text_feat)
+        last_hidden_state = outputs[0]
+        bs = last_hidden_state.shape[0]
+        assert len(ent1_spos)==len(ent2_spos)
+        ent1_spos = torch.tensor(ent1_spos)
+        ent2_spos = torch.tensor(ent2_spos)
+        embedding1 = last_hidden_state[[i for i in range(bs)],ent1_spos,:] 
+        embedding2 = last_hidden_state[[i for i in range(bs)],ent2_spos,:] 
+        embeddings = torch.cat([embedding1,embedding2],dim = 1)
+        return embeddings  
+
+    def get_embedding(self, text_feat):
+        outputs = self.bert(**text_feat)
+        pooled_output = outputs[1]
+        return pooled_output
+        
     def forward(self,text_arr):
         text_feat = self.tokenize(text_arr)
 
-        # freeze the parameters of bert backbone
-        outputs = self.bert(**text_feat)
-        # outputs = self.bert(
-        #     text_feat['input_ids'],
-        #     attention_mask=text_feat['attention_mask'],
-        #     token_type_ids=text_feat['token_type_ids'] if hasattr(text_feat,'token_type_ids') else None,
-        #     output_attentions=True,
-        #     output_hidden_states=True,
-        # )
-        # hidden_states=outputs.hidden_states,
-        # attentions=outputs.attentions,
-        pooled_output = outputs[1]
+        # outputs = self.bert(**text_feat)
+        # pooled_output = outputs[1]
+        pooled_output = self.get_embedding_PURE(text_feat) if self.args.dataset=="Wiki80" else self.get_embedding(text_feat)
 
         pooled_output = self.dropout(pooled_output)
         logits = self.fc(pooled_output)

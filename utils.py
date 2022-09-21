@@ -6,6 +6,63 @@ import  pickle
 from enum import Enum
 import time
 
+
+
+
+def get_subj_obj_start(input_ids_arr,tokenizer,additional_index):
+    """
+    Function:
+        to find the positon of the additional token, for example, 
+        suppose we have a text: '<S:PERSON> Jobs </S:PERSON> is the founder of <O:ORGANIZATION> Apple </O:ORGANIZATION>'
+        we gonna find the index of '<S:PERSON>' and '<O:ORGANIZATION>'
+    Args:
+    input_ids_arr like:
+        tensor([[  101,  9499,  1071,  2149, 30522,  8696, 30522, 30534,  6874,  9033,
+            4877,  3762, 30534, 10650,  1999, 12867,  1024,  5160,   102,     0,
+                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                0,     0,     0,     0,     0,     0,     0,     0],
+            [  101,  2019, 21931, 17680,  2013, 11587, 30532,  2149, 30532, 14344,
+            5016, 30537,  2406, 22517,  3361, 30537,  2006,  5958,  1010, 11211,
+            2007, 10908,  2005,  1037,  2149,  3446,  3013,  2006,  9317,  1010,
+            2992,  8069,  2008,  1996, 23902,  2013,  1996,  2149,  3847, 24185,
+            2229,  2003, 24070,  1010, 16743,  2056,  1012,   102]])
+    tokenizer:
+        as named
+    additional_index:
+        the first index of the additional_special_tokens
+    return:
+         subj and obj start position
+    """
+    subj_starts = []
+    obj_starts = []
+    for input_ids in input_ids_arr:
+        
+        subj_start = -1
+        obj_start = -1
+        checked_id = []
+        for idx,word_id in enumerate(input_ids):
+            if subj_start!=-1 and obj_start!=-1:
+                break
+            if word_id>=additional_index:
+                if word_id not in checked_id:
+                    checked_id.append(word_id)
+                    decoded_word = tokenizer.decode(word_id)
+                    if decoded_word.startswith("<S:"):
+                        subj_start = idx
+                    elif decoded_word.startswith("<O:"):
+                        obj_start = idx
+        if subj_start==-1 or obj_start==-1:
+            
+            
+            if subj_start==-1:
+                subj_start=0
+            if obj_start==-1:
+                obj_start=0
+        subj_starts.append(subj_start)
+        obj_starts.append(obj_start)
+    return subj_starts,obj_starts
+
 def get_time():
     curr_time = time.strftime("%m-%d-%H-%M-%S", time.localtime())
     return curr_time
