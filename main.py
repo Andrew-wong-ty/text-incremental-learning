@@ -17,17 +17,18 @@ from backbone import BertClassifier
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from parsers import args
-from utils import set_global_random_seed, AverageMeter, Summary, ProgressMeter, get_time, save, load
+from utils import set_global_random_seed, AverageMeter, Summary, ProgressMeter,SupConLoss, get_time, save, load, augment_text
 import numpy as np
 import tqdm
 import warnings
 from collections import Counter
 warnings.filterwarnings("ignore")
+if args.dataset=="Wiki80": from dataset_utils import Augs
 
 def adjust_learning_rate():
     pass
+
 
 def cal_acc(true, predict):
     N_right = 0
@@ -53,19 +54,46 @@ def train(train_loader, model:BertClassifier, criterion, optimizer, epoch, args)
         len(train_loader),
         [losses, accs],
         prefix="Epoch: [{}]".format(epoch))
+    if args.use_closs:
+        loss_cl = AverageMeter('Loss_cl', ':.4e', Summary.NONE)
+        loss_ce = AverageMeter('Loss_ce', ':.4e', Summary.NONE)
+        accs = AverageMeter('acc', ':6.2f', Summary.AVERAGE)
+        progress = ProgressMeter(
+            len(train_loader),
+            [loss_cl,loss_ce, accs],
+            prefix="Epoch: [{}]".format(epoch))
 
     model.train()
     for i_batch, (text, target) in enumerate(train_loader):
         adjust_learning_rate() 
-        output = model(text)
-        loss = criterion(output, target.to(args.device))
+        logits,sentence_feat = model(text)
+        # 使用别的loss
+        if args.use_closs:
+            text_aug = augment_text(list(text),Augs)  
+            n_same = 0
+            for t, t_a in zip(text, text_aug):
+                if  t==t_a: n_same+=1
+            # print(n_same)
+            output_aug,sentence_feat_aug = model(text_aug)
+            cl_loss = criterion['CLoss'](sentence_feat,sentence_feat_aug)
+        
+            
+        celoss = criterion['CEloss'](logits, target.to(args.device))
+        if args.use_closs: loss=celoss+cl_loss
+        else: loss=celoss
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         # calculate metric
-        _,_,_,acc = precision_recall_f1_acc(target, output)
-        losses.update(loss.item(), len(text))
-        accs.update(acc, len(text))
+        _,_,_,acc = precision_recall_f1_acc(target, logits)
+        if args.use_closs:
+            loss_cl.update(cl_loss.item(), len(text))
+            loss_ce.update(celoss.item(), len(text))
+            accs.update(acc, len(text))
+        else:
+            losses.update(loss.item(), len(text))
+            accs.update(acc, len(text))
 
         if i_batch % args.print_freq == 0:
             progress.display(i_batch)
@@ -87,7 +115,7 @@ def validate(val_loader, model:BertClassifier, criterion, args):
     pre = []
     model.eval()
     for i_batch, (text, target) in enumerate(val_loader):
-        output = model(text)
+        output,_ = model(text)
         loss = criterion(output, target.to(args.device))
         # calculate metric
         predicted_label = torch.argmax(output.detach().cpu(),-1).tolist()
@@ -182,6 +210,8 @@ def main():
     model = BertClassifier(args.model,args.base_class,args).to(args.device)
     print(model)
     criterion = nn.CrossEntropyLoss().to(args.device)
+    contrastive_criterion = SupConLoss(args)
+    criterions = {"CEloss":criterion,"CLoss": contrastive_criterion}
     # optimizer = torch.optim.SGD(model.parameters(), args.lr,
     #                             momentum=args.momentum,
     #                             weight_decay=args.weight_decay)
@@ -189,7 +219,7 @@ def main():
     # base training 
     best_f1 = -1
     for epoch in range(args.start_epoch, args.epochs):
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train(train_loader, model, criterions, optimizer, epoch, args)
         acc,f1 = validate(val_loader, model, criterion, args)
         if f1>best_f1:
             best_f1 = f1
@@ -204,9 +234,9 @@ def main():
                 , os.path.join(args.model_save_path, "checkpoint_{}_{}_{}_{}.pth".format(args.dataset,TIME,args.phase,args.base_class)))
 
     # load model for debug
-    model.load_state_dict(torch.load(os.path.join(args.model_save_path, "checkpoint_{}_{}_{}_{}.pth".format(args.dataset,TIME,args.phase,args.base_class)))['state_dict'])
-    acc,f1 = validate(val_loader, model, criterion, args)
-    print("acc and f1 after loading trained model, acc:{:.4f}, f1:{:.4f}".format(acc,f1))
+    # model.load_state_dict(torch.load(os.path.join(args.model_save_path, "checkpoint_{}_{}_{}_{}.pth".format(args.dataset,TIME,args.phase,args.base_class)))['state_dict'])
+    # acc,f1 = validate(val_loader, model, criterion, args)
+    # print("acc and f1 after loading trained model, acc:{:.4f}, f1:{:.4f}".format(acc,f1))
     #
     # increment learning 
     bias_fe = False

@@ -7,6 +7,7 @@ from parsers import args
 from typing import List
 from utils import load, save
 from clean import get_format_train_text
+from text_augmentation import Augmentation
 
 class mydataset(Dataset):
     def __init__(self, dataset:List[dict]):
@@ -87,10 +88,23 @@ def read_wiki80():
         item['target'] = item['label']
     tags = load("/home/tywang/future_study/text-incremental-learning/wiki/tags.pkl")
 
+    # get text augmentation
+    base_training_labels = list(range(args.base_class))
+    base_training_items = [item for item in train_list if item['target'] in base_training_labels]
+    keys = base_training_items[0].keys()
+    base_training_data_dict = {}
+    for k in keys:
+        for item in base_training_items:
+            if k not in base_training_data_dict:
+                base_training_data_dict[k] = [item[k]]
+            else:
+                base_training_data_dict[k].append(item[k])
+    Augs = Augmentation(base_training_data_dict)
+    
 
     n_class = len(set([item['target'] for item in train_list]))
-
-    return train_list,test_list,n_class,len(train_list),len(test_list),tags
+    
+    return train_list,test_list,n_class,len(train_list),len(test_list),tags,Augs
 
     debug_stop = 1
 
@@ -210,7 +224,7 @@ if args.dataset=="Dbpedia":
     
     debug_stop = 1
 if args.dataset=="Wiki80":
-    train_dataset,test_dataset,n_classes,n_train,n_test, tags = read_wiki80()
+    train_dataset,test_dataset,n_classes,n_train,n_test, tags, Augs = read_wiki80()
     args.tags = tags
     train_loader_base, val_loader_base, IL_dataset_train, IL_dataset_val,n_classes_for_each_phase = get_IL_loader(
         train_dataset,test_dataset,n_classes,n_train,n_test
